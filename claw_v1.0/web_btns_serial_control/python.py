@@ -1,4 +1,3 @@
-
 from flask import Flask, render_template_string, request, jsonify
 import serial
 import serial.tools.list_ports
@@ -46,7 +45,7 @@ arduino = connect_arduino()
 
 HTML_PAGE = """
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -156,6 +155,35 @@ HTML_PAGE = """
             margin-bottom: 24px;
         }
 
+        /* Стили для блока голосового управления */
+        .voice-card {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 14px;
+            margin-bottom: 24px;
+            border: 1px solid #0284c7;
+            text-align: center;
+        }
+        .btn-voice {
+            background: #0ea5e9;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        .btn-voice.listening {
+            background: #ef4444;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+            100% { transform: scale(1); }
+        }
+        .heard-text {
+            margin-top: 10px;
+            font-style: italic;
+            color: #94a3b8;
+        }
+
         .status {
             padding: 16px;
             background: #1e293b;
@@ -177,7 +205,15 @@ HTML_PAGE = """
 <div class="container">
 
     <h1>ARMAN</h1>
-    <p class="subtitle">Robotic Arm Control System</p>
+    <p class="subtitle">Robotic Arm Control System (с голосовым управлением)</p>
+
+    <!-- Блок голосового управления -->
+    <div class="voice-card">
+        <h3>🎙️ Голосовое управление</h3>
+        <p style="font-size: 13px; color: #94a3b8; margin: 5px 0;">Примеры: «открой клешню», «закрой клешню», «все на ноль», «все на девяносто»</p>
+        <button id="voiceBtn" class="btn btn-voice" onclick="toggleVoice()">🎤 Включить микрофон</button>
+        <div class="heard-text" id="heardText">Распознанный текст: —</div>
+    </div>
 
     <div class="global-actions">
         <button class="primary" onclick="setAll(0)">
@@ -211,7 +247,7 @@ HTML_PAGE = """
             <div class="card">
                 <div class="card-header">
                     <span class="servo-title">
-                        Servo ${servo} (D${index + 8})
+                        Servo ${servo} (D${index + 8}) ${servo === 'E' ? '— Клешня' : ''}
                     </span>
                     <span class="angle" id="angle-${servo}">
                         0°
@@ -308,6 +344,69 @@ HTML_PAGE = """
             setAngle(servo, angle);
         });
     }
+
+    // --- ЛОГИКА ГОЛОСОВОГО УПРАВЛЕНИЯ (Web Speech API) ---
+    let recognition = null;
+    let isListening = false;
+
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ru-RU';
+        recognition.continuous = true;
+        recognition.interimResults = false;
+
+        recognition.onresult = function(event) {
+            const lastResultIndex = event.results.length - 1;
+            const transcript = event.results[lastResultIndex][0].transcript.trim().toLowerCase();
+            document.getElementById('heardText').innerText = "Распознанный текст: «" + transcript + "»";
+
+            // Парсинг голосовых команд
+            if (transcript.includes('открой') || transcript.includes('открыть') || transcript.includes('раскрой')) {
+                setAngle('E', 0); // Открытие клешни (ось E)
+            } else if (transcript.includes('закрой') || transcript.includes('закрыть') || transcript.includes('сжать')) {
+                setAngle('E', 180); // Закрытие клешни (ось E)
+            } else if (transcript.includes('все на ноль') || transcript.includes('сбрось все')) {
+                setAll(0);
+            } else if (transcript.includes('все на девяносто')) {
+                setAll(90);
+            } else if (transcript.includes('все на сто восемьдесят')) {
+                setAll(180);
+            }
+        };
+
+        recognition.onerror = function(event) {
+            console.error("Ошибка распознавания:", event.error);
+            document.getElementById('status').innerText = "Ошибка микрофона: " + event.error;
+        };
+
+        recognition.onend = function() {
+            if (isListening) {
+                recognition.start(); // Автоматический перезапуск для постоянного прослушивания
+            }
+        };
+    } else {
+        document.getElementById('heardText').innerText = "Голосовой ввод поддерживается только в Google Chrome.";
+    }
+
+    function toggleVoice() {
+        if (!recognition) return;
+
+        const btn = document.getElementById('voiceBtn');
+        if (!isListening) {
+            recognition.start();
+            isListening = true;
+            btn.innerText = "🛑 Остановить микрофон";
+            btn.classList.add('listening');
+            document.getElementById('status').innerText = "Статус: Микрофон слушает команды...";
+        } else {
+            isListening = false;
+            recognition.stop();
+            btn.innerText = "🎤 Включить микрофон";
+            btn.classList.remove('listening');
+            document.getElementById('status').innerText = "Статус: Микрофон отключен";
+        }
+    }
 </script>
 </body>
 </html>
@@ -317,7 +416,6 @@ HTML_PAGE = """
 @app.route("/")
 def index():
     return render_template_string(HTML_PAGE)
-
 
 
 @app.route("/control", methods=["POST"])
